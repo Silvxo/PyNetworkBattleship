@@ -1,0 +1,114 @@
+import pygame
+import random
+import time
+
+# Configurações
+GRID_SIZE = 10
+CELL_SIZE = 50
+WIDTH = GRID_SIZE * CELL_SIZE
+HEIGHT = GRID_SIZE * CELL_SIZE + 120
+
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Batalha Naval - Modo Teste")
+font = pygame.font.SysFont(None, 28)
+
+WHITE = (255, 255, 255)
+GRAY = (200, 200, 200)
+BLUE = (50, 100, 255)
+RED = (230, 0, 0)
+BLACK = (0, 0, 0)
+
+player_pos = [random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1)]
+shots = []
+messages = []
+last_action_time = 0
+ACTION_INTERVAL = 10
+
+def draw_grid():
+    for x in range(GRID_SIZE):
+        for y in range(GRID_SIZE):
+            rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            pygame.draw.rect(screen, GRAY, rect, 1)
+            if [x, y] == player_pos:
+                pygame.draw.rect(screen, BLUE, rect)
+            if [x, y] in shots:
+                pygame.draw.circle(screen, RED, rect.center, 8)
+
+def draw_messages():
+    base_y = GRID_SIZE * CELL_SIZE + 5
+    for i, msg in enumerate(messages[-4:]):
+        text = font.render(msg, True, BLACK)
+        screen.blit(text, (10, base_y + i * 25))
+
+def can_act():
+    return time.time() - last_action_time >= ACTION_INTERVAL
+
+def remaining_time():
+    t = ACTION_INTERVAL - (time.time() - last_action_time)
+    return max(0, round(t, 1))
+
+def register_action(action):
+    global last_action_time
+    last_action_time = time.time()
+    messages.append(action)
+    print(action)
+
+def handle_click(pos):
+    x, y = pos[0] // CELL_SIZE, pos[1] // CELL_SIZE
+    if 0 <= x < GRID_SIZE and 0 <= y < GRID_SIZE:
+        if can_act():
+            shots.append([x, y])
+            register_action(f"Tiro em ({x}, {y})")
+        else:
+            messages.append(f"Aguarde {remaining_time()}s")
+
+def handle_move(direction):
+    if not can_act():
+        messages.append(f"Aguarde {remaining_time()}s")
+        return
+    if direction == "UP" and player_pos[1] > 0:
+        player_pos[1] -= 1
+    elif direction == "DOWN" and player_pos[1] < GRID_SIZE - 1:
+        player_pos[1] += 1
+    elif direction == "LEFT" and player_pos[0] > 0:
+        player_pos[0] -= 1
+    elif direction == "RIGHT" and player_pos[0] < GRID_SIZE - 1:
+        player_pos[0] += 1
+    register_action("Moveu-se")
+
+def draw_timer():
+    t = remaining_time()
+    text = font.render(f"Tempo restante: {t}s", True, BLACK)
+    screen.blit(text, (10, HEIGHT - 30))
+
+def print_hello_world():
+    print("Hello World")
+
+# Loop principal
+running = True
+while running:
+    screen.fill(WHITE)
+    draw_grid()
+    draw_messages()
+    draw_timer()
+    pygame.display.flip()
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            handle_click(event.pos)
+
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_w:
+                handle_move("UP")
+            elif event.key == pygame.K_s:
+                handle_move("DOWN")
+            elif event.key == pygame.K_a:
+                handle_move("LEFT")
+            elif event.key == pygame.K_d:
+                handle_move("RIGHT")
+
+pygame.quit()
