@@ -58,7 +58,7 @@ def print_exc_context(prefix=""):
 # =============================================================================
 
 def get_my_ip():
-    """Descobre IP local "visível" conectando a um destino externo (não envia dados)."""
+    """Descobre IP local 'visível' conectando a um destino externo (não envia dados)."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # destino arbitrário; não envia pacotes
@@ -120,8 +120,7 @@ def send_tcp_message(ip, message, timeout=TCP_SEND_TIMEOUT):
         print(f"[TCP Enviado para {ip}]: {message}")
     except Exception as e:
         print(f"Erro ao enviar TCP para {ip}: {e}")
-        # não imprimir traceback completo em cada falha trivial, mas útil em debug:
-        # print_exc_context()
+        # print_exc_context()  # útil em debug
 
 # =============================================================================
 # LÓGICA DE MENSAGENS
@@ -138,17 +137,23 @@ def handle_message(data, ip, protocol, tcp_conn=None):
 
         # --- Conexão ---
         if message == "Conectando":
+            list_str = None
             with lock:
                 if ip not in participants and ip != my_ip:
                     participants.add(ip)
                     print(f"Novo participante: {ip}")
                     print(f"Lista de participantes atualizada: {list(participants)}")
-                    list_str = f"participantes:{list(participants)}"
-                    # responde via TCP com a lista (tenta, mas se falhar não quebra)
-                    try:
-                        send_tcp_message(ip, list_str)
-                    except Exception:
-                        pass
+                    # inclui todos que conheço + eu mesmo
+                    all_ips = set(participants)
+                    if my_ip:
+                        all_ips.add(my_ip)
+                    list_str = f"participantes:{list(all_ips)}"
+            # responde via TCP com a lista (se tiver algo novo para mandar)
+            if list_str is not None:
+                try:
+                    send_tcp_message(ip, list_str)
+                except Exception:
+                    pass
 
         elif message.startswith("participantes:"):
             try:
@@ -181,13 +186,8 @@ def handle_message(data, ip, protocol, tcp_conn=None):
                 print(f"Erro ao processar 'shot': {e}")
                 print_exc_context()
 
-        # --- Jogo: scout (TCP esperado) ---
+        # --- Jogo: scout (TCP preferido) ---
         elif message.startswith("scout:"):
-            # 'scout' precisa de tcp_conn para responder na mesma conexão
-            if not tcp_conn:
-                # se chegou por UDP, ignoramos (ou poderíamos solicitar TCP)
-                print(f"Ignorando 'scout' por {protocol.upper()} (esperado TCP).")
-                return
             try:
                 coords = message.split(':', 1)[1].split(',')
                 shot_x, shot_y = int(coords[0]), int(coords[1])
@@ -195,15 +195,12 @@ def handle_message(data, ip, protocol, tcp_conn=None):
                 with lock:
                     my_x, my_y = my_position
 
-                if (shot_x, shot_y) == my_position:
+                if (shot_x, shot_y) == (my_x, my_y):
                     print(f"ALERTA: Fui atingido por 'scout' de {ip}!")
                     with lock:
                         times_hit += 1
-                    try:
-                        tcp_conn.sendall(b"hit")
-                    except Exception:
-                        # se falhar, não quebramos
-                        pass
+                    # responde abrindo TCP de volta
+                    send_tcp_message(ip, "hit")
                 else:
                     # dx = sign(my_x - shot_x), dy = sign(my_y - shot_y)
                     if my_x > shot_x:
@@ -221,10 +218,7 @@ def handle_message(data, ip, protocol, tcp_conn=None):
                         dy = 0
 
                     info_msg = f"info:{dx},{dy}"
-                    try:
-                        tcp_conn.sendall(info_msg.encode())
-                    except Exception:
-                        pass
+                    send_tcp_message(ip, info_msg)
             except Exception as e:
                 print(f"Erro ao processar 'scout': {e}")
                 print_exc_context()
@@ -279,11 +273,6 @@ def handle_tcp_client(connection, addr):
 
             # processa a mensagem, permitindo respostas através da mesma conexão
             handle_message(data, ip, 'tcp', tcp_conn=connection)
-
-            # dependendo do protocolo/uso, pode-se continuar lendo mais mensagens
-            # ou encerrar após a primeira (aqui mantemos laço para suportar múltiplas).
-            # Se preferir encerrar após uma resposta, descomente o break:
-            # break
 
     except Exception as e:
         print(f"Erro ao lidar com cliente TCP {ip}: {e}")
@@ -459,7 +448,7 @@ def main():
             if not game_running:
                 break
 
-            # coleta input (bloqueante). Se preferir modo não-bloqueante, precisa de outra abordagem.
+            # coleta input (bloqueante)
             raw = input("Ação (shot X Y | scout X Y IP | move {+|-}{x|y} | sair): ")
             cmd, args = parse_input_preserve(raw)
             if not cmd:
