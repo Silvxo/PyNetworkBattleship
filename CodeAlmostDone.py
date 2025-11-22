@@ -27,6 +27,7 @@ times_hit = 0
 players_hit = set()
 game_running = True
 move_penalty = False
+moved = False
 lock = threading.Lock()
 
 # --- Configurações adicionais ---
@@ -411,44 +412,8 @@ def parse_input_preserve(raw_input):
     return cmd, args
 
 
-def run_pygame_interface():
-    try:
-        cell_size=40
-        margin=20
-        size_px = GRID_SIZE * cell_size + margin * 2
-        screen = pygame.display.set_mode((size_px, size_px))
-        pygame.display.set_caption("Battleship - Grid Inicial")
-
-        screen.fill((18, 24, 30))
-
-        global game_running
-        while game_running:
-        # linhas do grid
-            for i in range(GRID_SIZE + 1):
-                x = margin + i * cell_size
-                pygame.draw.line(screen, (200, 200, 200), (x, margin), (x, margin + GRID_SIZE * cell_size))
-                y = margin + i * cell_size
-                pygame.draw.line(screen, (200, 200, 200), (margin, y), (margin + GRID_SIZE * cell_size, y))
-
-            # desenha a posição própria, se disponível
-            try:
-                with lock:
-                    pos = my_position
-            except Exception:
-                pos = None
-
-            if pos is not None:
-                px = margin + pos[0] * cell_size + cell_size // 2
-                py = margin + pos[1] * cell_size + cell_size // 2
-                pygame.draw.circle(screen, (220, 50, 50), (px, py), int(cell_size * 0.35))
-            pygame.display.flip()
-
-    except Exception as e:
-        print(f"Erro ao exibir grid com pygame: {e}")
-
-
 def main():
-    global game_running, move_penalty, my_ip, my_position
+    global game_running, move_penalty, moved, my_ip, my_position
     initialize_game()
 
     # inicia servidores
@@ -518,11 +483,11 @@ def main():
                     valid_move = False
                     with lock:
                         x, y = my_position
-                        if move == "+x" and x < GRID_SIZE - 1:
+                        if move == "+x" and x < GRID_SIZE:
                             x += 1; valid_move = True
                         elif move == "-x" and x > 0:
                             x -= 1; valid_move = True
-                        elif move == "+y" and y < GRID_SIZE - 1:
+                        elif move == "+y" and y < GRID_SIZE:
                             y += 1; valid_move = True
                         elif move == "-y" and y > 0:
                             y -= 1; valid_move = True
@@ -530,12 +495,16 @@ def main():
                         if valid_move:
                             my_position = (x, y)
                             print(f"Nova posição: {my_position}")
-                            send_udp_to_all("moved")
                             move_penalty = True
+                            moved = True
                         else:
                             print("Movimento inválido ou fora dos limites.")
                 else:
                     print("Formato inválido. Use: move {+|-}{x|y}")
+                if moved:
+                    send_udp_to_all("moved")
+                    moved = False
+
 
             elif cmd == "sair":
                 game_running = False
