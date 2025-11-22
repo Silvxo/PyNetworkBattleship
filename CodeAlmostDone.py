@@ -12,7 +12,6 @@ import time
 import sys
 import ast
 import traceback
-import pygame
 
 # --- Configurações Globais ---
 UDP_PORT = 5000
@@ -378,7 +377,6 @@ def tcp_server_thread():
 
 def initialize_game():
     global my_position, my_ip
-    pygame.init()
     my_ip = get_my_ip()
     my_position = (random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1))
     print(f"Meu IP: {my_ip}")
@@ -456,10 +454,8 @@ def main():
     # inicia servidores
     udp_thread = threading.Thread(target=udp_server_thread, daemon=True)
     tcp_thread = threading.Thread(target=tcp_server_thread, daemon=True)
-    pygame_interface_thread = threading.Thread(target=run_pygame_interface, daemon=True)
     udp_thread.start()
     tcp_thread.start()
-    pygame_interface_thread.start()
 
     # dá um segundo para iniciar
     time.sleep(1)
