@@ -12,6 +12,7 @@ import time
 import sys
 import ast
 import traceback
+import pygame
 
 # --- Configurações Globais ---
 UDP_PORT = 5000
@@ -70,7 +71,7 @@ def get_my_ip():
         return "127.0.0.1"
 
 def send_broadcast_udp(message):
-    """Envia mensagem UDP em broadcast. Faz bind em porta efêmera antes de enviar."""
+    #Envia mensagem UDP em broadcast. Faz bind em porta efêmera antes de enviar
     try:
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -92,7 +93,7 @@ def send_broadcast_udp(message):
         print_exc_context()
 
 def send_udp_to_all(message):
-    """Envia UDP para cada participante conhecido (thread-safe)."""
+    #Envia UDP para cada participante conhecido (thread-safe)
     with lock:
         current_participants = list(participants)
     try:
@@ -110,7 +111,7 @@ def send_udp_to_all(message):
         print_exc_context()
 
 def send_tcp_message(ip, message, timeout=TCP_SEND_TIMEOUT):
-    """Envia uma mensagem TCP, com timeout e tratamento."""
+    #Envia uma mensagem TCP, com timeout e tratamento
     try:
         tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp_socket.settimeout(timeout)
@@ -120,14 +121,14 @@ def send_tcp_message(ip, message, timeout=TCP_SEND_TIMEOUT):
         print(f"[TCP Enviado para {ip}]: {message}")
     except Exception as e:
         print(f"Erro ao enviar TCP para {ip}: {e}")
-        # print_exc_context()  # útil em debug
+        # print_exc_context()  # debug
 
 # =============================================================================
 # LÓGICA DE MENSAGENS
 # =============================================================================
 
 def handle_message(data, ip, protocol, tcp_conn=None):
-    """Processa mensagens recebidas (UDP ou TCP)."""
+    #Processa mensagens recebidas (UDP ou TCP)
     global times_hit
     try:
         message = safe_decode(data)
@@ -377,6 +378,7 @@ def tcp_server_thread():
 
 def initialize_game():
     global my_position, my_ip
+    pygame.init()
     my_ip = get_my_ip()
     my_position = (random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1))
     print(f"Meu IP: {my_ip}")
@@ -410,15 +412,54 @@ def parse_input_preserve(raw_input):
     args = parts[1:]
     return cmd, args
 
+
+def run_pygame_interface():
+    try:
+        cell_size=40
+        margin=20
+        size_px = GRID_SIZE * cell_size + margin * 2
+        screen = pygame.display.set_mode((size_px, size_px))
+        pygame.display.set_caption("Battleship - Grid Inicial")
+
+        screen.fill((18, 24, 30))
+
+        global game_running
+        while game_running:
+        # linhas do grid
+            for i in range(GRID_SIZE + 1):
+                x = margin + i * cell_size
+                pygame.draw.line(screen, (200, 200, 200), (x, margin), (x, margin + GRID_SIZE * cell_size))
+                y = margin + i * cell_size
+                pygame.draw.line(screen, (200, 200, 200), (margin, y), (margin + GRID_SIZE * cell_size, y))
+
+            # desenha a posição própria, se disponível
+            try:
+                with lock:
+                    pos = my_position
+            except Exception:
+                pos = None
+
+            if pos is not None:
+                px = margin + pos[0] * cell_size + cell_size // 2
+                py = margin + pos[1] * cell_size + cell_size // 2
+                pygame.draw.circle(screen, (220, 50, 50), (px, py), int(cell_size * 0.35))
+            pygame.display.flip()
+
+    except Exception as e:
+        print(f"Erro ao exibir grid com pygame: {e}")
+
+
 def main():
-    global game_running, move_penalty, my_ip
+    global game_running, move_penalty, my_ip, my_position
     initialize_game()
 
     # inicia servidores
     udp_thread = threading.Thread(target=udp_server_thread, daemon=True)
     tcp_thread = threading.Thread(target=tcp_server_thread, daemon=True)
+    pygame_interface_thread = threading.Thread(target=run_pygame_interface, daemon=True)
     udp_thread.start()
     tcp_thread.start()
+    pygame_interface_thread.start()
 
     # dá um segundo para iniciar
     time.sleep(1)
