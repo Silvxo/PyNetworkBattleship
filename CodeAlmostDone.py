@@ -13,6 +13,13 @@ import sys
 import ast
 import traceback
 
+# Optional pygame UI (imported safely)
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except Exception:
+    PYGAME_AVAILABLE = False
+
 # --- Configurações Globais ---
 UDP_PORT = 5000
 TCP_PORT = 5001
@@ -412,6 +419,220 @@ def parse_input_preserve(raw_input):
     return cmd, args
 
 
+class PygameInterface(threading.Thread):
+    """Threaded Pygame interface with participants list and action cooldowns.
+
+    - Left-click grid: send `shot:x,y` (if cooldown expired).
+    - Right-click grid: move to cell and broadcast `moved` (20s cooldown).
+    - Left-click participant IP in the list: send `scout:x,y IP` using hovered cell.
+    """
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.running = False
+        self.cell_size = 40
+        self.margin = 20
+        self.grid_px = GRID_SIZE * self.cell_size + self.margin * 2
+        self.sidebar_width = 220
+        self.width = self.grid_px + self.sidebar_width
+        self.height = self.grid_px
+        self.clock = None
+
+        # GUI state
+        self.last_action_time = 0.0
+        self.cooldown = 0.0
+        self.selected_hover = None
+
+    def start(self):
+        if not PYGAME_AVAILABLE:
+            print("Pygame not available; GUI disabled.")
+            return
+        self.running = True
+        super().start()
+
+    def stop(self):
+        self.running = False
+
+    def _can_do_action(self):
+        now = time.time()
+        return (now - self.last_action_time) >= self.cooldown
+
+    def _set_action(self, cooldown_secs):
+        self.last_action_time = time.time()
+        self.cooldown = cooldown_secs
+
+    def run(self):
+        try:
+            pygame.init()
+            screen = pygame.display.set_mode((self.width, self.height))
+            pygame.display.set_caption('PyNetworkBattleship')
+            self.clock = pygame.time.Clock()
+            font = pygame.font.SysFont(None, 18)
+            title_font = pygame.font.SysFont(None, 20)
+
+            while self.running and game_running:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        print("Pygame: quit requested")
+                        try:
+                            globals()['game_running'] = False
+                        except Exception:
+                            pass
+                        self.running = False
+
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        mx, my = pygame.mouse.get_pos()
+
+                        # clicked in participants sidebar
+                        if mx >= self.grid_px:
+                            list_x = mx - self.grid_px
+                            # compute which participant index
+                            with lock:
+                                part_list = list(participants)
+                            # top margin for list
+                            top = 40
+                            line_h = 20
+                            idx = (my - top) // line_h
+                            if 0 <= idx < len(part_list):
+                                # try to scout using last hovered grid cell; fallback to my_position
+                                if self.selected_hover is not None:
+                                    hx, hy = self.selected_hover
+                                else:
+                                    with lock:
+                                        hx, hy = my_position
+
+                                # enforce cooldown
+                                if not self._can_do_action():
+                                    # ignore action
+                                    print("Aguarde cooldown antes de outra ação.")
+                                else:
+                                    target_ip = part_list[idx]
+                                    try:
+                                        send_tcp_message(target_ip, f"scout:{hx},{hy}")
+                                        self._set_action(10.0)
+                                    except Exception as e:
+                                        print(f"Pygame: erro ao enviar scout para {target_ip}: {e}")
+                            continue
+
+                        # clicked inside grid
+                        gx = (mx - self.margin) // self.cell_size
+                        gy = (my - self.margin) // self.cell_size
+                        if gx < 0 or gy < 0 or gx >= GRID_SIZE or gy >= GRID_SIZE:
+                            continue
+
+                        # left click -> shot
+                        if event.button == 1:
+                            if not self._can_do_action():
+                                print("Aguarde cooldown antes de outra ação.")
+                            else:
+                                try:
+                                    send_udp_to_all(f"shot:{gx},{gy}")
+                                    self._set_action(10.0)
+                                except Exception as e:
+                                    print(f"Pygame: erro ao enviar shot: {e}")
+
+                        # right click -> move (20s cooldown) but only 1 block orthogonally
+                        elif event.button == 3:
+                            if not self._can_do_action():
+                                print("Aguarde cooldown antes de outra ação.")
+                            else:
+                                try:
+                                    with lock:
+                                        cur_x, cur_y = my_position
+                                    dx = abs(gx - cur_x)
+                                    dy = abs(gy - cur_y)
+                                    # allow only one block movement in a single axis (no diagonal)
+                                    if (dx + dy) == 1:
+                                        try:
+                                            with lock:
+                                                globals()['my_position'] = (gx, gy)
+                                                globals()['moved'] = True
+                                                globals()['move_penalty'] = True
+                                            send_udp_to_all("moved")
+                                            self._set_action(20.0)
+                                        except Exception as e:
+                                            print(f"Pygame: erro ao mover: {e}")
+                                    else:
+                                        print("Movimento inválido: pode mover somente 1 bloco em x ou y (sem diagonal).")
+                                except Exception as e:
+                                    print(f"Pygame: erro ao validar movimento: {e}")
+
+                # draw background and grid
+                screen.fill((18, 24, 30))
+                for i in range(GRID_SIZE + 1):
+                    x = self.margin + i * self.cell_size
+                    pygame.draw.line(screen, (120, 120, 120), (x, self.margin), (x, self.margin + GRID_SIZE * self.cell_size))
+                    y = self.margin + i * self.cell_size
+                    pygame.draw.line(screen, (120, 120, 120), (self.margin, y), (self.margin + GRID_SIZE * self.cell_size, y))
+
+                # draw my position
+                try:
+                    with lock:
+                        pos = my_position
+                except Exception:
+                    pos = None
+                if pos is not None:
+                    px = self.margin + pos[0] * self.cell_size + self.cell_size // 2
+                    py = self.margin + pos[1] * self.cell_size + self.cell_size // 2
+                    pygame.draw.circle(screen, (220, 50, 50), (px, py), int(self.cell_size * 0.35))
+
+                # hover highlight
+                mx, my = pygame.mouse.get_pos()
+                gx = (mx - self.margin) // self.cell_size
+                gy = (my - self.margin) // self.cell_size
+                hover_valid = (0 <= gx < GRID_SIZE and 0 <= gy < GRID_SIZE)
+                if hover_valid:
+                    rx = self.margin + gx * self.cell_size
+                    ry = self.margin + gy * self.cell_size
+                    pygame.draw.rect(screen, (255, 255, 255), (rx, ry, self.cell_size, self.cell_size), 2)
+                    self.selected_hover = (gx, gy)
+                else:
+                    self.selected_hover = None
+
+                # sidebar: participants list
+                sidebar_x = self.grid_px
+                pygame.draw.rect(screen, (28, 34, 40), (sidebar_x, 0, self.sidebar_width, self.height))
+                title = title_font.render('Participants', True, (230, 230, 230))
+                screen.blit(title, (sidebar_x + 10, 10))
+                with lock:
+                    part_list = list(participants)
+                top = 40
+                line_h = 20
+                for i, p in enumerate(part_list):
+                    color = (200, 200, 200)
+                    txt = font.render(p, True, color)
+                    screen.blit(txt, (sidebar_x + 10, top + i * line_h))
+
+                # cooldown overlay/status
+                now = time.time()
+                remaining = 0.0
+                if (now - self.last_action_time) < self.cooldown:
+                    remaining = self.cooldown - (now - self.last_action_time)
+                status_lines = [f"IP: {my_ip}", f"Pos: {my_position}", f"Players: {len(participants)}", f"Hits: {times_hit}"]
+                for i, line in enumerate(status_lines):
+                    surf = font.render(line, True, (230, 230, 230))
+                    screen.blit(surf, (10, 10 + i * 18))
+
+                if remaining > 0:
+                    rem_s = int(remaining + 0.999)
+                    cd_surf = title_font.render(f'Cooldown: {rem_s}s', True, (255, 200, 60))
+                    screen.blit(cd_surf, (sidebar_x + 10, self.height - 30))
+
+                pygame.display.flip()
+                self.clock.tick(30)
+
+        except Exception as e:
+            print(f"Pygame UI error: {e}")
+            print_exc_context()
+        finally:
+            try:
+                if PYGAME_AVAILABLE:
+                    pygame.quit()
+            except Exception:
+                pass
+
+
+
 def main():
     global game_running, move_penalty, moved, my_ip, my_position
     initialize_game()
@@ -427,6 +648,16 @@ def main():
 
     # anuncia presença
     send_broadcast_udp("Conectando")
+
+    # opcional: inicia interface pygame (não bloqueante)
+    ui = None
+    if PYGAME_AVAILABLE:
+        try:
+            ui = PygameInterface()
+            ui.start()
+        except Exception as e:
+            print(f"Falha ao iniciar interface Pygame: {e}")
+            print_exc_context()
 
     try:
         while game_running:
@@ -483,11 +714,12 @@ def main():
                     valid_move = False
                     with lock:
                         x, y = my_position
-                        if move == "+x" and x < GRID_SIZE:
+                        # only allow single-step orthogonal moves (no diagonal), and stay inside grid
+                        if move == "+x" and x < GRID_SIZE - 1:
                             x += 1; valid_move = True
                         elif move == "-x" and x > 0:
                             x -= 1; valid_move = True
-                        elif move == "+y" and y < GRID_SIZE:
+                        elif move == "+y" and y < GRID_SIZE - 1:
                             y += 1; valid_move = True
                         elif move == "-y" and y > 0:
                             y -= 1; valid_move = True
@@ -525,6 +757,15 @@ def main():
         send_udp_to_all("saindo")
 
     # finalização: aguarda término das threads (pequena espera)
+    # stop UI if running
+    try:
+        if 'ui' in locals() and ui is not None:
+            ui.stop()
+            # give pygame a brief moment to quit
+            ui.join(timeout=1.0)
+    except Exception:
+        pass
+
     time.sleep(1)
 
     score, p_hit, t_hit = calculate_score()
