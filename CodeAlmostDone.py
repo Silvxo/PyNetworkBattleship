@@ -36,6 +36,7 @@ game_running = True
 move_penalty = False
 moved = False
 lock = threading.Lock()
+ui_instance = None  # Global reference to PygameInterface for logging
 
 # --- Configurações adicionais ---
 TCP_SEND_TIMEOUT = 3.0  # timeout ao tentar enviar via TCP
@@ -134,8 +135,8 @@ def send_tcp_message(ip, message, timeout=TCP_SEND_TIMEOUT):
 # LÓGICA DE MENSAGENS
 # =============================================================================
 
-def handle_message(data, ip, protocol, tcp_conn=None):
-    #Processa mensagens recebidas (UDP ou TCP)
+def handle_message(data, ip, protocol, tcp_conn=None, ui=None):
+    #Processa mensagens recebidas (UDP ou TCP); ui é a interface pygame para logging
     global times_hit
     try:
         message = safe_decode(data)
@@ -188,6 +189,8 @@ def handle_message(data, ip, protocol, tcp_conn=None):
                     if (x, y) == my_position:
                         print(f"ALERTA: Fui atingido por 'shot' de {ip}!")
                         times_hit += 1
+                        if ui is not None:
+                            ui._add_action(f"HIT by shot {ip}:{x},{y}")
                         # Responde com "hit" via TCP
                         send_tcp_message(ip, "hit")
             except Exception as e:
@@ -207,6 +210,8 @@ def handle_message(data, ip, protocol, tcp_conn=None):
                     print(f"ALERTA: Fui atingido por 'scout' de {ip}!")
                     with lock:
                         times_hit += 1
+                    if ui is not None:
+                        ui._add_action(f"HIT by scout {ip}:{shot_x},{shot_y}")
                     # responde abrindo TCP de volta
                     send_tcp_message(ip, "hit")
                 else:
@@ -235,9 +240,13 @@ def handle_message(data, ip, protocol, tcp_conn=None):
             print(f"SUCESSO: Você atingiu {ip}!")
             with lock:
                 players_hit.add(ip)
+            if ui is not None:
+                ui._add_action(f"SHOT hit {ip}")
 
         elif message.startswith("info:"):
             print(f"INFO (Scout): Pista de {ip}: {message}")
+            if ui is not None:
+                ui._add_action(f"scout info {ip}: {message}")
 
         elif message == "moved":
             print(f"INFO: Jogador {ip} se moveu.")
@@ -280,7 +289,7 @@ def handle_tcp_client(connection, addr):
                 break
 
             # processa a mensagem, permitindo respostas através da mesma conexão
-            handle_message(data, ip, 'tcp', tcp_conn=connection)
+            handle_message(data, ip, 'tcp', tcp_conn=connection, ui=ui_instance)
 
     except Exception as e:
         print(f"Erro ao lidar com cliente TCP {ip}: {e}")
@@ -320,7 +329,7 @@ def udp_server_thread():
             # ignora mensagens locais de loopback e as próprias mensagens (se desejar)
             if sender_ip == my_ip or sender_ip == "127.0.0.1":
                 continue
-            handle_message(data, sender_ip, 'udp')
+            handle_message(data, sender_ip, 'udp', ui=ui_instance)
         except socket.timeout:
             continue
         except Exception as e:
@@ -420,11 +429,12 @@ def parse_input_preserve(raw_input):
 
 
 class PygameInterface(threading.Thread):
-    """Threaded Pygame interface with participants list and action cooldowns.
+    """Threaded Pygame interface with participants list, two-step scout, action cooldowns, and action history.
 
     - Left-click grid: send `shot:x,y` (if cooldown expired).
-    - Right-click grid: move to cell and broadcast `moved` (20s cooldown).
-    - Left-click participant IP in the list: send `scout:x,y IP` using hovered cell.
+    - Right-click grid: move to cell and broadcast `moved` (20s cooldown, must be 1 block orthogonal).
+    - Two-step scout: left-click IP to select, then left-click grid cell to send `scout:x,y IP`.
+    - Action history scrolls below participants list.
     """
 
     def __init__(self):
@@ -442,6 +452,21 @@ class PygameInterface(threading.Thread):
         self.last_action_time = 0.0
         self.cooldown = 0.0
         self.selected_hover = None
+        
+        # Scout selection state
+        self.scout_selected_ip = None  # IP selected for next scout action
+        
+        # Action history (thread-safe with lock)
+        self.action_history = []  # list of (timestamp, action_str)
+        self.history_scroll_offset = 0  # for scrolling
+        
+    def _add_action(self, action_str):
+        """Add an action to the history log."""
+        ts = time.time()
+        self.action_history.append((ts, action_str))
+        # keep last 50 actions
+        if len(self.action_history) > 50:
+            self.action_history.pop(0)
 
     def start(self):
         if not PYGAME_AVAILABLE:
@@ -485,7 +510,6 @@ class PygameInterface(threading.Thread):
 
                         # clicked in participants sidebar
                         if mx >= self.grid_px:
-                            list_x = mx - self.grid_px
                             # compute which participant index
                             with lock:
                                 part_list = list(participants)
@@ -494,24 +518,14 @@ class PygameInterface(threading.Thread):
                             line_h = 20
                             idx = (my - top) // line_h
                             if 0 <= idx < len(part_list):
-                                # try to scout using last hovered grid cell; fallback to my_position
-                                if self.selected_hover is not None:
-                                    hx, hy = self.selected_hover
+                                target_ip = part_list[idx]
+                                # toggle selection: click same IP to deselect, different IP to select new one
+                                if self.scout_selected_ip == target_ip:
+                                    self.scout_selected_ip = None
+                                    print(f"Scout deselected.")
                                 else:
-                                    with lock:
-                                        hx, hy = my_position
-
-                                # enforce cooldown
-                                if not self._can_do_action():
-                                    # ignore action
-                                    print("Aguarde cooldown antes de outra ação.")
-                                else:
-                                    target_ip = part_list[idx]
-                                    try:
-                                        send_tcp_message(target_ip, f"scout:{hx},{hy}")
-                                        self._set_action(10.0)
-                                    except Exception as e:
-                                        print(f"Pygame: erro ao enviar scout para {target_ip}: {e}")
+                                    self.scout_selected_ip = target_ip
+                                    print(f"Scout selected: {target_ip}. Agora clique em uma célula do grid.")
                             continue
 
                         # clicked inside grid
@@ -520,16 +534,31 @@ class PygameInterface(threading.Thread):
                         if gx < 0 or gy < 0 or gx >= GRID_SIZE or gy >= GRID_SIZE:
                             continue
 
-                        # left click -> shot
+                        # left click -> shot or scout (if IP selected)
                         if event.button == 1:
-                            if not self._can_do_action():
-                                print("Aguarde cooldown antes de outra ação.")
+                            # if scout IP is selected, perform scout instead of shot
+                            if self.scout_selected_ip is not None:
+                                if not self._can_do_action():
+                                    print("Aguarde cooldown antes de outra ação.")
+                                else:
+                                    try:
+                                        send_tcp_message(self.scout_selected_ip, f"scout:{gx},{gy}")
+                                        self._add_action(f"scout:{gx},{gy} -> {self.scout_selected_ip}")
+                                        self._set_action(10.0)
+                                        self.scout_selected_ip = None  # deselect after sending
+                                    except Exception as e:
+                                        print(f"Pygame: erro ao enviar scout para {self.scout_selected_ip}: {e}")
                             else:
-                                try:
-                                    send_udp_to_all(f"shot:{gx},{gy}")
-                                    self._set_action(10.0)
-                                except Exception as e:
-                                    print(f"Pygame: erro ao enviar shot: {e}")
+                                # normal shot
+                                if not self._can_do_action():
+                                    print("Aguarde cooldown antes de outra ação.")
+                                else:
+                                    try:
+                                        send_udp_to_all(f"shot:{gx},{gy}")
+                                        self._add_action(f"shot:{gx},{gy}")
+                                        self._set_action(10.0)
+                                    except Exception as e:
+                                        print(f"Pygame: erro ao enviar shot: {e}")
 
                         # right click -> move (20s cooldown) but only 1 block orthogonally
                         elif event.button == 3:
@@ -549,6 +578,7 @@ class PygameInterface(threading.Thread):
                                                 globals()['moved'] = True
                                                 globals()['move_penalty'] = True
                                             send_udp_to_all("moved")
+                                            self._add_action(f"move:{gx},{gy}")
                                             self._set_action(20.0)
                                         except Exception as e:
                                             print(f"Pygame: erro ao mover: {e}")
@@ -599,9 +629,30 @@ class PygameInterface(threading.Thread):
                 top = 40
                 line_h = 20
                 for i, p in enumerate(part_list):
-                    color = (200, 200, 200)
+                    # highlight selected IP for scout
+                    if p == self.scout_selected_ip:
+                        color = (255, 200, 100)
+                    else:
+                        color = (200, 200, 200)
                     txt = font.render(p, True, color)
                     screen.blit(txt, (sidebar_x + 10, top + i * line_h))
+                
+                # action history
+                hist_top = top + len(part_list) * line_h + 20
+                hist_title = font.render('History', True, (230, 230, 230))
+                screen.blit(hist_title, (sidebar_x + 10, hist_top))
+                hist_top += 20
+                hist_height = self.height - hist_top - 10
+                
+                # draw action history entries (scrollable)
+                now = time.time()
+                for i, (ts, action_str) in enumerate(self.action_history[self.history_scroll_offset:]):
+                    if i * line_h >= hist_height:
+                        break
+                    # shorten to fit sidebar width
+                    display_str = action_str[:28] if len(action_str) > 28 else action_str
+                    hist_txt = font.render(display_str, True, (150, 150, 200))
+                    screen.blit(hist_txt, (sidebar_x + 10, hist_top + i * line_h))
 
                 # cooldown overlay/status
                 now = time.time()
@@ -634,7 +685,7 @@ class PygameInterface(threading.Thread):
 
 
 def main():
-    global game_running, move_penalty, moved, my_ip, my_position
+    global game_running, move_penalty, moved, my_ip, my_position, ui_instance
     initialize_game()
 
     # inicia servidores
@@ -650,11 +701,11 @@ def main():
     send_broadcast_udp("Conectando")
 
     # opcional: inicia interface pygame (não bloqueante)
-    ui = None
+    ui_instance = None
     if PYGAME_AVAILABLE:
         try:
-            ui = PygameInterface()
-            ui.start()
+            ui_instance = PygameInterface()
+            ui_instance.start()
         except Exception as e:
             print(f"Falha ao iniciar interface Pygame: {e}")
             print_exc_context()
@@ -759,10 +810,10 @@ def main():
     # finalização: aguarda término das threads (pequena espera)
     # stop UI if running
     try:
-        if 'ui' in locals() and ui is not None:
-            ui.stop()
+        if ui_instance is not None:
+            ui_instance.stop()
             # give pygame a brief moment to quit
-            ui.join(timeout=1.0)
+            ui_instance.join(timeout=1.0)
     except Exception:
         pass
 
