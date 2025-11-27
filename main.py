@@ -468,15 +468,10 @@ def parse_input_preserve(raw_input):
     args = parts[1:]
     return cmd, args
 
-
-
-
-
 def shutdown_servers():
-    #Gracefully shutdown UDP and TCP servers
     global game_running, udp_socket, tcp_socket
     game_running = False
-    time.sleep(0.5)  # Give threads time to notice game_running = False
+    time.sleep(0.5) 
     
     try:
         if udp_socket:
@@ -511,23 +506,21 @@ def main():
                 return
 
         elif state == "INIT_GAME":
-            # Initialize game and start servers
+            # Inicia o jogo
             game_running = True
             initialize_game()
 
-            # Start servers
+            # Inicia server
             udp_thread = threading.Thread(target=udp_server_thread, daemon=True)
             tcp_thread = threading.Thread(target=tcp_server_thread, daemon=True)
             udp_thread.start()
             tcp_thread.start()
 
-            # Wait for servers to start
             time.sleep(1)
 
-            # Announce presence
             send_broadcast_udp("Conectando")
 
-            # Start Pygame UI
+            # Inicia UI
             ui_instance = None
             if PYGAME_AVAILABLE:
                 try:
@@ -553,13 +546,11 @@ def main():
         elif state == "GAME":
             try:
                 while game_running:
-                    # If Pygame UI is running, don't use console input - just monitor game_running flag
+                    # Se tem pygame, não usa input do console
                     if ui_instance is not None and ui_instance.is_alive():
-                        # UI is handling all input, just wait for game_running to become False
                         time.sleep(0.5)
                         continue
                     
-                    # Console-only mode (no Pygame)
                     print_status()
 
                     if move_penalty:
@@ -652,7 +643,7 @@ def main():
                 game_running = False
                 send_udp_to_all("saindo")
 
-            # Stop UI
+            # Para UI
             try:
                 if ui_instance is not None:
                     ui_instance.stop()
@@ -661,11 +652,11 @@ def main():
             except Exception:
                 pass
 
-            # Shutdown servers gracefully
+            # Desliga os servers
             shutdown_servers()
-            time.sleep(1.0)  # Give pygame time to fully shut down before restarting
+            time.sleep(1.0)  # tempo para pygame finalizar sem problemas
 
-            # Calculate final score
+            # Calcula pontuação
             score, p_hit, t_hit = calculate_score()
             state = "SCORE"
             final_score = score
@@ -673,7 +664,7 @@ def main():
             final_times_hit = t_hit
 
         elif state == "SCORE":
-            # Show score screen
+            # Mostra pontuação
             score_screen = ScoreScreen(final_score, final_hits, final_times_hit)
             score_screen.start()
             if score_screen.is_alive():
@@ -686,7 +677,7 @@ def main():
             if score_screen.choice == "menu":
                 state = "MENU"
             else:
-                # Window closed or timeout, return to menu
+                # Retorna ao menu
                 state = "MENU"
 
 if __name__ == "__main__":
