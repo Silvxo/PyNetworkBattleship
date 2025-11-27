@@ -16,14 +16,14 @@ import sys
 import ast
 import traceback
 
-# Import UI components
+# Importa componentes do ui.py
 try:
     from ui import MenuScreen, ScoreScreen, PygameInterface, PYGAME_AVAILABLE
 except Exception as e:
     print(f"Warning: Could not import UI components: {e}")
     PYGAME_AVAILABLE = False
     
-    # Dummy classes for fallback
+    # Classes dummy
     class MenuScreen:
         def __init__(self): pass
         def start(self): pass
@@ -44,13 +44,11 @@ except Exception as e:
         def stop(self): pass
         def join(self, timeout=None): pass
 
-# --- Global Configuration ---
 UDP_PORT = 5000
 TCP_PORT = 5001
 GRID_SIZE = 10
 BROADCAST_ADDR = '255.255.255.255'
 
-# --- Game State ---
 participants = set()
 my_position = (0, 0)
 my_ip = ""
@@ -72,7 +70,7 @@ UDP_RECV_TIMEOUT = 1.0
 # UTILIDADES
 # -------------------------
 def safe_decode(data):
-    """Decodifica bytes para str de forma segura."""
+    #Decodifica bytes para str de forma segura
     try:
         return data.decode().strip()
     except Exception:
@@ -92,7 +90,7 @@ def print_exc_context(prefix=""):
 # =============================================================================
 
 def get_my_ip():
-    """Descobre IP local 'visível' conectando a um destino externo (não envia dados)."""
+    #Descobre IP local 'visível' conectando a um destino externo (não envia dados)
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # destino arbitrário; não envia pacotes
@@ -104,7 +102,7 @@ def get_my_ip():
         return "127.0.0.1"
 
 def send_broadcast_udp(message):
-    #Envia mensagem UDP em broadcast. Faz bind em porta efêmera antes de enviar
+    #Envia mensagem UDP em broadcast
     try:
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -161,7 +159,7 @@ def send_tcp_message(ip, message, timeout=TCP_SEND_TIMEOUT):
 # =============================================================================
 
 def handle_message(data, ip, protocol, tcp_conn=None, ui=None):
-    #Processa mensagens recebidas (UDP ou TCP); ui é a interface pygame para logging
+    #Processa mensagens recebidas (UDP ou TCP)
     global times_hit
     try:
         message = safe_decode(data)
@@ -205,7 +203,6 @@ def handle_message(data, ip, protocol, tcp_conn=None, ui=None):
                 print(f"Erro ao processar lista de participantes: {e}")
                 print_exc_context()
 
-        # --- Jogo: shot (UDP) ---
         elif message.startswith("shot:"):
             try:
                 coords = message.split(':', 1)[1].split(',')
@@ -215,7 +212,7 @@ def handle_message(data, ip, protocol, tcp_conn=None, ui=None):
                         print(f"ALERTA: Fui atingido por 'shot' de {ip}!")
                         times_hit += 1
                         if ui is not None:
-                            ui._add_action(f"HIT by shot {ip}:{x},{y}")
+                            ui._add_action(f"HIT por {ip}")
                         # Responde com "hit" via TCP
                         send_tcp_message(ip, "hit")
             except Exception as e:
@@ -236,7 +233,7 @@ def handle_message(data, ip, protocol, tcp_conn=None, ui=None):
                     with lock:
                         times_hit += 1
                     if ui is not None:
-                        ui._add_action(f"HIT by scout {ip}:{shot_x},{shot_y}")
+                        ui._add_action(f"HIT por {ip}")
                     # responde abrindo TCP de volta
                     send_tcp_message(ip, "hit")
                 else:
@@ -275,9 +272,11 @@ def handle_message(data, ip, protocol, tcp_conn=None, ui=None):
 
         elif message == "moved":
             print(f"INFO: Jogador {ip} se moveu.")
+            ui._add_action(f"INFO: Jogador {ip} se moveu.")
 
         elif message == "saindo":
             print(f"INFO: Jogador {ip} saiu do jogo.")
+            ui._add_action(f"INFO: Jogador {ip} saiu do jogo.")
             with lock:
                 if ip in participants:
                     participants.remove(ip)
@@ -368,7 +367,6 @@ def udp_server_thread():
     print("Servidor UDP encerrado.")
 
 def tcp_server_thread():
-    """Thread que aceita conexões TCP e cria handlers."""
     global game_running
     tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -497,14 +495,14 @@ def main():
     """Main game loop with state machine: MENU -> GAME -> SCORE -> MENU"""
     global game_running, move_penalty, moved, my_ip, my_position, ui_instance
     
-    state = "MENU"  # START with menu
+    state = "MENU"  #Inicia no estado MENU
 
     while True:
         if state == "MENU":
-            # Show menu screen
+            # Tela do menu
             menu = MenuScreen()
             menu.start()
-            menu.join()  # Wait for menu to finish
+            menu.join()
             
             if menu.choice == "play":
                 state = "INIT_GAME"
@@ -553,9 +551,15 @@ def main():
             state = "GAME"
 
         elif state == "GAME":
-            # Main game loop
             try:
                 while game_running:
+                    # If Pygame UI is running, don't use console input - just monitor game_running flag
+                    if ui_instance is not None and ui_instance.is_alive():
+                        # UI is handling all input, just wait for game_running to become False
+                        time.sleep(0.5)
+                        continue
+                    
+                    # Console-only mode (no Pygame)
                     print_status()
 
                     if move_penalty:
@@ -574,7 +578,7 @@ def main():
                     if not game_running:
                         break
 
-                    # Collect input (blocking)
+                    # coleta input
                     raw = input("Ação (shot X Y | scout X Y IP | move {+|-}{x|y} | sair): ")
                     cmd, args = parse_input_preserve(raw)
                     if not cmd:
@@ -628,7 +632,8 @@ def main():
                         if moved:
                             send_udp_to_all("moved")
                             moved = False
-
+                    if game_running == False:
+                        cmd = "sair"
                     elif cmd == "sair":
                         game_running = False
                         send_udp_to_all("saindo")

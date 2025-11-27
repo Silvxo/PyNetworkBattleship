@@ -237,7 +237,7 @@ class PygameInterface(threading.Thread):
         self.margin = 20
         self.grid_size = grid_size
         self.grid_px = grid_size * self.cell_size + self.margin * 2
-        self.sidebar_width = 220
+        self.sidebar_width = 350
         self.button_height = 50
         self.width = self.grid_px + self.sidebar_width
         self.height = self.grid_px + self.button_height
@@ -470,7 +470,7 @@ class PygameInterface(threading.Thread):
                 for i, (ts, action_str) in enumerate(self.action_history[self.history_scroll_offset:]):
                     if i * line_h >= hist_height:
                         break
-                    display_str = action_str[:28] if len(action_str) > 28 else action_str
+                    display_str = action_str[:50] if len(action_str) > 50 else action_str
                     hist_txt = font.render(display_str, True, (150, 150, 200))
                     screen.blit(hist_txt, (sidebar_x + 10, hist_top + i * line_h))
 
