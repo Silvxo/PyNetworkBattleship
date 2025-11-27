@@ -473,7 +473,7 @@ def parse_input_preserve(raw_input):
 
 
 def shutdown_servers():
-    """Gracefully shutdown UDP and TCP servers."""
+    #Gracefully shutdown UDP and TCP servers
     global game_running, udp_socket, tcp_socket
     game_running = False
     time.sleep(0.5)  # Give threads time to notice game_running = False
