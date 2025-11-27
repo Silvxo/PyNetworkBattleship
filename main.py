@@ -444,8 +444,9 @@ class PygameInterface(threading.Thread):
         self.margin = 20
         self.grid_px = GRID_SIZE * self.cell_size + self.margin * 2
         self.sidebar_width = 220
+        self.button_height = 50  # space for Leave button below grid
         self.width = self.grid_px + self.sidebar_width
-        self.height = self.grid_px
+        self.height = self.grid_px + self.button_height
         self.clock = None
 
         # GUI state
@@ -459,6 +460,11 @@ class PygameInterface(threading.Thread):
         # Action history (thread-safe with lock)
         self.action_history = []  # list of (timestamp, action_str)
         self.history_scroll_offset = 0  # for scrolling
+        
+        # Leave button state
+        self.leave_button_rect = None  # will be set during rendering
+        self.show_score = False  # show score popup when Leave is clicked
+        self.score_show_time = 0.0  # when score was shown
         
     def _add_action(self, action_str):
         """Add an action to the history log."""
@@ -507,6 +513,17 @@ class PygameInterface(threading.Thread):
 
                     elif event.type == pygame.MOUSEBUTTONDOWN:
                         mx, my = pygame.mouse.get_pos()
+
+                        # check Leave button click
+                        if self.leave_button_rect is not None and self.leave_button_rect.collidepoint(mx, my):
+                            self.show_score = True
+                            self.score_show_time = time.time()
+                            with lock:
+                                globals()['game_running'] = False
+                            send_udp_to_all("saindo")
+                            print("Leaving game...")
+                            self.running = False
+                            continue
 
                         # clicked in participants sidebar
                         if mx >= self.grid_px:
@@ -668,6 +685,41 @@ class PygameInterface(threading.Thread):
                     rem_s = int(remaining + 0.999)
                     cd_surf = title_font.render(f'Cooldown: {rem_s}s', True, (255, 200, 60))
                     screen.blit(cd_surf, (sidebar_x + 10, self.height - 30))
+
+                # Button area background (below grid)
+                pygame.draw.rect(screen, (18, 24, 30), (0, self.grid_px, self.grid_px, self.button_height))
+
+                # Leave button (below grid, spanning width)
+                button_y = self.grid_px + 10
+                button_x = self.margin
+                button_w = self.grid_px - self.margin * 2
+                button_h = 30
+                self.leave_button_rect = pygame.Rect(button_x, button_y, button_w, button_h)
+                pygame.draw.rect(screen, (200, 50, 50), self.leave_button_rect)
+                button_txt = font.render('Sair', True, (255, 255, 255))
+                btn_rect = button_txt.get_rect(center=self.leave_button_rect.center)
+                screen.blit(button_txt, btn_rect)
+
+                # Show score if leaving
+                if self.show_score:
+                    with lock:
+                        score = len(players_hit) - times_hit
+                    # semi-transparent overlay
+                    overlay = pygame.Surface((self.width, self.height))
+                    overlay.set_alpha(180)
+                    overlay.fill((0, 0, 0))
+                    screen.blit(overlay, (0, 0))
+                    
+                    # score text
+                    score_font = pygame.font.SysFont(None, 60)
+                    score_txt = score_font.render(f'SCORE: {score}', True, (100, 255, 100))
+                    score_rect = score_txt.get_rect(center=(self.width // 2, self.height // 2))
+                    screen.blit(score_txt, score_rect)
+                    
+                    # small info text
+                    info_txt = font.render(f'Hits: {len(players_hit)} | Hit by: {times_hit}', True, (200, 200, 200))
+                    info_rect = info_txt.get_rect(center=(self.width // 2, self.height // 2 + 50))
+                    screen.blit(info_txt, info_rect)
 
                 pygame.display.flip()
                 self.clock.tick(30)
