@@ -392,6 +392,24 @@ def tcp_server_thread():
 # JOGO E INTERFACE
 # =============================================================================
 
+def shutdown_servers():
+    """Gracefully shutdown UDP and TCP servers."""
+    global game_running, udp_socket, tcp_socket
+    game_running = False
+    time.sleep(0.5)  # Give threads time to notice game_running = False
+    
+    try:
+        if udp_socket:
+            udp_socket.close()
+    except Exception:
+        pass
+    
+    try:
+        if tcp_socket:
+            tcp_socket.close()
+    except Exception:
+        pass
+
 def initialize_game():
     global my_position, my_ip
     my_ip = get_my_ip()
@@ -426,6 +444,164 @@ def parse_input_preserve(raw_input):
     cmd = parts[0].lower()
     args = parts[1:]
     return cmd, args
+
+
+class MenuScreen(threading.Thread):
+    """Menu screen with Jogar and Sair options."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.running = False
+        self.clock = None
+        self.choice = None  # "play", "quit", or None
+
+    def start(self):
+        if not PYGAME_AVAILABLE:
+            print("Pygame not available; menu disabled.")
+            return
+        self.running = True
+        super().start()
+
+    def stop(self):
+        self.running = False
+
+    def run(self):
+        try:
+            pygame.init()
+            screen = pygame.display.set_mode((600, 400))
+            pygame.display.set_caption('PyNetworkBattleship - Menu')
+            self.clock = pygame.time.Clock()
+            font_title = pygame.font.SysFont(None, 60)
+            font_button = pygame.font.SysFont(None, 40)
+
+            play_button_rect = pygame.Rect(150, 150, 300, 60)
+            quit_button_rect = pygame.Rect(150, 250, 300, 60)
+
+            while self.running and self.choice is None:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        self.choice = "quit"
+                        self.running = False
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        mx, my = pygame.mouse.get_pos()
+                        if play_button_rect.collidepoint(mx, my):
+                            self.choice = "play"
+                            self.running = False
+                        elif quit_button_rect.collidepoint(mx, my):
+                            self.choice = "quit"
+                            self.running = False
+
+                # Draw background
+                screen.fill((18, 24, 30))
+
+                # Draw title
+                title = font_title.render('PyNetworkBattleship', True, (100, 200, 255))
+                title_rect = title.get_rect(center=(300, 50))
+                screen.blit(title, title_rect)
+
+                # Draw play button
+                pygame.draw.rect(screen, (50, 150, 50), play_button_rect)
+                play_txt = font_button.render('Jogar', True, (255, 255, 255))
+                play_txt_rect = play_txt.get_rect(center=play_button_rect.center)
+                screen.blit(play_txt, play_txt_rect)
+
+                # Draw quit button
+                pygame.draw.rect(screen, (200, 50, 50), quit_button_rect)
+                quit_txt = font_button.render('Sair', True, (255, 255, 255))
+                quit_txt_rect = quit_txt.get_rect(center=quit_button_rect.center)
+                screen.blit(quit_txt, quit_txt_rect)
+
+                pygame.display.flip()
+                self.clock.tick(30)
+
+        except Exception as e:
+            print(f"Menu error: {e}")
+            print_exc_context()
+        finally:
+            try:
+                if PYGAME_AVAILABLE:
+                    pygame.quit()
+            except Exception:
+                pass
+
+
+class ScoreScreen(threading.Thread):
+    """Score screen shown after game ends, with 'Voltar para o Menu' button."""
+
+    def __init__(self, score, hits, times_hit):
+        super().__init__(daemon=True)
+        self.running = False
+        self.clock = None
+        self.choice = None  # "menu" or None
+        self.score = score
+        self.hits = hits
+        self.times_hit = times_hit
+
+    def start(self):
+        if not PYGAME_AVAILABLE:
+            print("Pygame not available; score screen disabled.")
+            return
+        self.running = True
+        super().start()
+
+    def stop(self):
+        self.running = False
+
+    def run(self):
+        try:
+            pygame.init()
+            screen = pygame.display.set_mode((600, 400))
+            pygame.display.set_caption('PyNetworkBattleship - Score')
+            self.clock = pygame.time.Clock()
+            font_title = pygame.font.SysFont(None, 70)
+            font_info = pygame.font.SysFont(None, 30)
+            font_button = pygame.font.SysFont(None, 35)
+
+            back_button_rect = pygame.Rect(150, 300, 300, 60)
+
+            while self.running and self.choice is None:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        self.choice = "menu"
+                        self.running = False
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        mx, my = pygame.mouse.get_pos()
+                        if back_button_rect.collidepoint(mx, my):
+                            self.choice = "menu"
+                            self.running = False
+
+                # Draw background
+                screen.fill((18, 24, 30))
+
+                # Draw score
+                score_txt = font_title.render(f'SCORE: {self.score}', True, (100, 255, 100))
+                score_rect = score_txt.get_rect(center=(300, 80))
+                screen.blit(score_txt, score_rect)
+
+                # Draw stats
+                stats_txt = font_info.render(f'Hits: {self.hits} | Hit by: {self.times_hit}', True, (200, 200, 200))
+                stats_rect = stats_txt.get_rect(center=(300, 180))
+                screen.blit(stats_txt, stats_rect)
+
+                # Draw back button
+                pygame.draw.rect(screen, (50, 100, 200), back_button_rect)
+                back_txt = font_button.render('Voltar para o Menu', True, (255, 255, 255))
+                back_txt_rect = back_txt.get_rect(center=back_button_rect.center)
+                screen.blit(back_txt, back_txt_rect)
+
+                pygame.display.flip()
+                self.clock.tick(30)
+
+        except Exception as e:
+            print(f"Score screen error: {e}")
+            print_exc_context()
+        finally:
+            try:
+                if PYGAME_AVAILABLE:
+                    pygame.quit()
+            except Exception:
+                pass
+
 
 
 class PygameInterface(threading.Thread):
@@ -463,8 +639,6 @@ class PygameInterface(threading.Thread):
         
         # Leave button state
         self.leave_button_rect = None  # will be set during rendering
-        self.show_score = False  # show score popup when Leave is clicked
-        self.score_show_time = 0.0  # when score was shown
         
     def _add_action(self, action_str):
         """Add an action to the history log."""
@@ -701,26 +875,6 @@ class PygameInterface(threading.Thread):
                 screen.blit(button_txt, btn_rect)
 
                 # Show score if leaving
-                if self.show_score:
-                    with lock:
-                        score = len(players_hit) - times_hit
-                    # semi-transparent overlay
-                    overlay = pygame.Surface((self.width, self.height))
-                    overlay.set_alpha(180)
-                    overlay.fill((0, 0, 0))
-                    screen.blit(overlay, (0, 0))
-                    
-                    # score text
-                    score_font = pygame.font.SysFont(None, 60)
-                    score_txt = score_font.render(f'SCORE: {score}', True, (100, 255, 100))
-                    score_rect = score_txt.get_rect(center=(self.width // 2, self.height // 2))
-                    screen.blit(score_txt, score_rect)
-                    
-                    # small info text
-                    info_txt = font.render(f'Hits: {len(players_hit)} | Hit by: {times_hit}', True, (200, 200, 200))
-                    info_rect = info_txt.get_rect(center=(self.width // 2, self.height // 2 + 50))
-                    screen.blit(info_txt, info_rect)
-
                 pygame.display.flip()
                 self.clock.tick(30)
 
@@ -737,147 +891,179 @@ class PygameInterface(threading.Thread):
 
 
 def main():
+    """Main game loop with state machine: MENU -> GAME -> SCORE -> MENU"""
     global game_running, move_penalty, moved, my_ip, my_position, ui_instance
-    initialize_game()
+    
+    state = "MENU"  # START with menu
 
-    # inicia servidores
-    udp_thread = threading.Thread(target=udp_server_thread, daemon=True)
-    tcp_thread = threading.Thread(target=tcp_server_thread, daemon=True)
-    udp_thread.start()
-    tcp_thread.start()
+    while True:
+        if state == "MENU":
+            # Show menu screen
+            menu = MenuScreen()
+            menu.start()
+            menu.join()  # Wait for menu to finish
+            
+            if menu.choice == "play":
+                state = "INIT_GAME"
+            elif menu.choice == "quit" or menu.choice is None:
+                print("Saindo do jogo...")
+                return
 
-    # dá um segundo para iniciar
-    time.sleep(1)
+        elif state == "INIT_GAME":
+            # Initialize game and start servers
+            game_running = True
+            initialize_game()
 
-    # anuncia presença
-    send_broadcast_udp("Conectando")
+            # Start servers
+            udp_thread = threading.Thread(target=udp_server_thread, daemon=True)
+            tcp_thread = threading.Thread(target=tcp_server_thread, daemon=True)
+            udp_thread.start()
+            tcp_thread.start()
 
-    # opcional: inicia interface pygame (não bloqueante)
-    ui_instance = None
-    if PYGAME_AVAILABLE:
-        try:
-            ui_instance = PygameInterface()
-            ui_instance.start()
-        except Exception as e:
-            print(f"Falha ao iniciar interface Pygame: {e}")
-            print_exc_context()
+            # Wait for servers to start
+            time.sleep(1)
 
-    try:
-        while game_running:
-            print_status()
+            # Announce presence
+            send_broadcast_udp("Conectando")
 
-            if move_penalty:
-                print("Penalidade de movimento: esperando 10s adicionais...")
-                # Espera em passos para ser mais responsivo ao shutdown
-                for _ in range(10):
+            # Start Pygame UI
+            ui_instance = None
+            if PYGAME_AVAILABLE:
+                try:
+                    ui_instance = PygameInterface()
+                    ui_instance.start()
+                except Exception as e:
+                    print(f"Falha ao iniciar interface Pygame: {e}")
+                    print_exc_context()
+
+            state = "GAME"
+
+        elif state == "GAME":
+            # Main game loop
+            try:
+                while game_running:
+                    print_status()
+
+                    if move_penalty:
+                        print("Penalidade de movimento: esperando 10s adicionais...")
+                        for _ in range(10):
+                            if not game_running:
+                                break
+                            time.sleep(1)
+                        move_penalty = False
+
+                    print("Próxima ação em 10 segundos...")
+                    for _ in range(10):
+                        if not game_running:
+                            break
+                        time.sleep(1)
                     if not game_running:
                         break
-                    time.sleep(1)
-                move_penalty = False
 
-            print("Próxima ação em 10 segundos...")
-            # aguarda 10s (em pequenos passos para responder a shutdown)
-            for _ in range(10):
-                if not game_running:
-                    break
-                time.sleep(1)
-            if not game_running:
-                break
+                    # Collect input (blocking)
+                    raw = input("Ação (shot X Y | scout X Y IP | move {+|-}{x|y} | sair): ")
+                    cmd, args = parse_input_preserve(raw)
+                    if not cmd:
+                        continue
+                    print(f"[Ação Enviada]: {raw}")
 
-            # coleta input (bloqueante)
-            raw = input("Ação (shot X Y | scout X Y IP | move {+|-}{x|y} | sair): ")
-            cmd, args = parse_input_preserve(raw)
-            if not cmd:
-                continue
-            print(f"[Ação Enviada]: {raw}")
-
-            if cmd == "shot":
-                if len(args) == 2:
-                    try:
-                        x = int(args[0]); y = int(args[1])
-                        send_udp_to_all(f"shot:{x},{y}")
-                    except ValueError:
-                        print("Coordenadas devem ser inteiros. Use: shot X Y")
-                else:
-                    print("Formato inválido. Use: shot X Y")
-
-            elif cmd == "scout":
-                if len(args) == 3:
-                    try:
-                        x = int(args[0]); y = int(args[1]); ip = args[2]
-                        send_tcp_message(ip, f"scout:{x},{y}")
-                    except ValueError:
-                        print("Coordenadas devem ser inteiros. Use: scout X Y IP")
-                else:
-                    print("Formato inválido. Use: scout X Y IP")
-
-            elif cmd == "move":
-                if len(args) == 1:
-                    move = args[0]
-                    valid_move = False
-                    with lock:
-                        x, y = my_position
-                        # only allow single-step orthogonal moves (no diagonal), and stay inside grid
-                        if move == "+x" and x < GRID_SIZE - 1:
-                            x += 1; valid_move = True
-                        elif move == "-x" and x > 0:
-                            x -= 1; valid_move = True
-                        elif move == "+y" and y < GRID_SIZE - 1:
-                            y += 1; valid_move = True
-                        elif move == "-y" and y > 0:
-                            y -= 1; valid_move = True
-
-                        if valid_move:
-                            my_position = (x, y)
-                            print(f"Nova posição: {my_position}")
-                            move_penalty = True
-                            moved = True
+                    if cmd == "shot":
+                        if len(args) == 2:
+                            try:
+                                x = int(args[0]); y = int(args[1])
+                                send_udp_to_all(f"shot:{x},{y}")
+                            except ValueError:
+                                print("Coordenadas devem ser inteiros. Use: shot X Y")
                         else:
-                            print("Movimento inválido ou fora dos limites.")
-                else:
-                    print("Formato inválido. Use: move {+|-}{x|y}")
-                if moved:
-                    send_udp_to_all("moved")
-                    moved = False
+                            print("Formato inválido. Use: shot X Y")
 
+                    elif cmd == "scout":
+                        if len(args) == 3:
+                            try:
+                                x = int(args[0]); y = int(args[1]); ip = args[2]
+                                send_tcp_message(ip, f"scout:{x},{y}")
+                            except ValueError:
+                                print("Coordenadas devem ser inteiros. Use: scout X Y IP")
+                        else:
+                            print("Formato inválido. Use: scout X Y IP")
 
-            elif cmd == "sair":
+                    elif cmd == "move":
+                        if len(args) == 1:
+                            move = args[0]
+                            valid_move = False
+                            with lock:
+                                x, y = my_position
+                                if move == "+x" and x < GRID_SIZE - 1:
+                                    x += 1; valid_move = True
+                                elif move == "-x" and x > 0:
+                                    x -= 1; valid_move = True
+                                elif move == "+y" and y < GRID_SIZE - 1:
+                                    y += 1; valid_move = True
+                                elif move == "-y" and y > 0:
+                                    y -= 1; valid_move = True
+
+                                if valid_move:
+                                    my_position = (x, y)
+                                    print(f"Nova posição: {my_position}")
+                                    move_penalty = True
+                                    moved = True
+                                else:
+                                    print("Movimento inválido ou fora dos limites.")
+                        else:
+                            print("Formato inválido. Use: move {+|-}{x|y}")
+                        if moved:
+                            send_udp_to_all("moved")
+                            moved = False
+
+                    elif cmd == "sair":
+                        game_running = False
+                        send_udp_to_all("saindo")
+                        break
+
+                    else:
+                        print("Comando inválido.")
+
+            except KeyboardInterrupt:
+                print("\nSaindo por (Ctrl+C)...")
                 game_running = False
                 send_udp_to_all("saindo")
-                break
+            except Exception as e:
+                print(f"Erro no loop principal: {e}")
+                print_exc_context()
+                game_running = False
+                send_udp_to_all("saindo")
 
+            # Stop UI
+            try:
+                if ui_instance is not None:
+                    ui_instance.stop()
+                    ui_instance.join(timeout=1.0)
+            except Exception:
+                pass
+
+            # Shutdown servers gracefully
+            shutdown_servers()
+            time.sleep(0.5)
+
+            # Calculate final score
+            score, p_hit, t_hit = calculate_score()
+            state = "SCORE"
+            final_score = score
+            final_hits = p_hit
+            final_times_hit = t_hit
+
+        elif state == "SCORE":
+            # Show score screen
+            score_screen = ScoreScreen(final_score, final_hits, final_times_hit)
+            score_screen.start()
+            score_screen.join()  # Wait for score screen to finish
+
+            if score_screen.choice == "menu":
+                state = "MENU"
             else:
-                print("Comando inválido.")
-
-    except KeyboardInterrupt:
-        print("\nSaindo por (Ctrl+C)...")
-        game_running = False
-        send_udp_to_all("saindo")
-    except Exception as e:
-        print(f"Erro no loop principal: {e}")
-        print_exc_context()
-        game_running = False
-        send_udp_to_all("saindo")
-
-    # finalização: aguarda término das threads (pequena espera)
-    # stop UI if running
-    try:
-        if ui_instance is not None:
-            ui_instance.stop()
-            # give pygame a brief moment to quit
-            ui_instance.join(timeout=1.0)
-    except Exception:
-        pass
-
-    time.sleep(1)
-
-    score, p_hit, t_hit = calculate_score()
-    print("\n" + "*"*30)
-    print("SCORE FINAL")
-    print(f"Vezes que foi atingido: {t_hit}")
-    print(f"Jogadores únicos atingidos: {p_hit}")
-    print(f"Score Total (Jogadores Atingidos - Vezes Atingido): {score}")
-    print("*"*30)
+                # Window closed or timeout, return to menu
+                state = "MENU"
 
 if __name__ == "__main__":
     main()
+
